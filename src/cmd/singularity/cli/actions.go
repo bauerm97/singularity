@@ -161,7 +161,7 @@ func execWrapper(cobraCmd *cobra.Command, image string, args []string) {
 	progname := "singularity " + args[0]
 
 	cfg := &config.Common{
-		EngineName:   "singularity",
+		EngineName:   singularity.Name,
 		ContainerID:  "new",
 		OciConfig:    oci,
 		EngineConfig: engineConfig,
