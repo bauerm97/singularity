@@ -1,0 +1,182 @@
+libruntime := $(BUILDDIR)/lib/libruntime.a
+
+libstartup := $(BUILDDIR)/lib/libstartup.a
+libstartup_HEADER := $(BUILDDIR)/lib/libstartup.h
+libstartup_OBJ := $(shell $(SOURCEDIR)/makeit/gengodep $(SOURCEDIR)/src/runtime/startup/smaster.go)
+libstartup_OBJ += $(shell $(SOURCEDIR)/makeit/gengodep $(SOURCEDIR)/src/runtime/startup/scontainer.go)
+libstartup_OBJ += $(shell $(SOURCEDIR)/makeit/gengodep $(SOURCEDIR)/src/runtime/startup/rpc.go)
+
+singularity := $(BUILDDIR)/singularity
+singularity_INSTALL := $(PREFIX)/bin/singularity
+singularity_OBJ := $(shell $(SOURCEDIR)/makeit/gengodep $(SOURCEDIR)/src/cmd/singularity/cli.go)
+
+wrapper := $(BUILDDIR)/src/runtime/startup/c/wrapper
+wrapper_INSTALL := $(PREFIX)/libexec/singularity/bin/wrapper
+wrapper_suid_INSTALL := $(PREFIX)/libexec/singularity/bin/wrapper-suid
+
+sif_INSTALL := $(PREFIX)/libexec/singularity/bin/sif
+
+config := $(BUILDDIR)/singularity.conf
+config_INSTALL := $(PREFIX)/etc/singularity/singularity.conf
+
+mountdir := $(PREFIX)/var/singularity/mnt/container
+finaldir := $(PREFIX)/var/singularity/mnt/final
+overlaydir := $(PREFIX)/var/singularity/mnt/overlay
+sessiondir := $(PREFIX)/var/singularity/mnt/session
+
+go_BIN := $(singularity) $(sbuild)
+go_OBJ := $(SOURCEDIR)/src/pkg/buildcfg/config.go
+go_INSTALL := $(singularity_INSTALL) $(sbuild_INSTALL)
+
+go_TAG = "containers_image_openpgp singularity_sif"
+
+cgo_CPPFLAGS = -I$(BUILDDIR) -I$(SOURCEDIR)/src/runtime -I$(SOURCEDIR)/src/runtime/c/lib
+cgo_LDFLAGS = -L`readlink -f $(BUILDDIR)`/lib
+
+INSTALLFILES := $(singularity_INSTALL) $(sbuild_INSTALL) $(wrapper_INSTALL) $(wrapper_suid_INSTALL) $(sif_INSTALL) $(mountdir) $(finaldir) $(overlaydir) $(sessiondir) $(config_INSTALL)
+
+CLEANFILES += $(libruntime) $(libstartup) $(wrapper) $(sbuild) $(singularity) $(wrapper_OBJ) $(go_BIN) $(go_OBJ) $(libstartup_HEADER)
+
+all: cscope collect $(libruntime) $(libstartup) $(go_BIN) $(config) $(wrapper)
+
+$(libruntime): $(libutil_OBJ) $(libimage_OBJ) $(libruntime_OBJ) $(libsif_OBJ)
+	@echo " AR" $@
+	@mkdir -p $(@D)
+	$(V)$(AR) rcs $@ $(libutil_OBJ) $(libimage_OBJ) $(libruntime_OBJ) $(libsif_OBJ)
+
+# libstartup
+$(libstartup): $(go_OBJ) $(libstartup_OBJ) $(wrapper_OBJ) $(libruntime)
+	@echo " AR" $@
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		go build -ldflags="-s -w" -buildmode=c-archive -o $@ \
+		$(SOURCEDIR)/src/runtime/startup/scontainer.go \
+		$(SOURCEDIR)/src/runtime/startup/smaster.go \
+		$(SOURCEDIR)/src/runtime/startup/rpc.go
+
+# wrapper
+wrapper_OBJ := \
+	$(BUILDDIR)/src/runtime/startup/wrapper.o \
+
+$(wrapper_OBJ): $(libstartup) $(SOURCEDIR)/src/runtime/startup/c/wrapper.c
+	@echo " CC src/runtime/startup/c/wrapper.c"
+	@mkdir -p $(@D)
+	$(V)$(CC) -Wp,-MMD,$(BUILDDIR)/src/runtime/startup/wrapper.o.d -I$(BUILDDIR) -c $(ARCH_CFLAGS) $(CFLAGS)  $(CPPFLAGS) -o $(BUILDDIR)/src/runtime/startup/wrapper.o $(SOURCEDIR)/src/runtime/startup/c/wrapper.c
+
+$(wrapper): $(wrapper_OBJ) $(libstartup)
+	@echo " LD" $@
+	@mkdir -p $(@D)
+	$(V)$(CC) $(LDFLAGS)  -o $@ $(wrapper_OBJ) -Wl,--start-group -L$(BUILDDIR)/lib -lruntime -lstartup -Wl,--end-group -luuid -lpthread -lgpgme
+	$(V)($(SIZE) $@ 2>/dev/null || true)
+
+# singularity
+$(singularity): $(go_OBJ) $(libruntime) $(singularity_OBJ)
+	@echo " GO" $@
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		go build -tags $(go_TAG) -o $(BUILDDIR)/singularity $(SOURCEDIR)/src/cmd/singularity/cli.go
+$(singularity_INSTALL): $(singularity)
+	@echo " INSTALL" $@
+	$(V)install -d $(@D)
+	$(V)install -m 0755 $(singularity) $(singularity_INSTALL) # set cp to install
+
+# config.go
+$(go_OBJ): $(libruntime) $(BUILDDIR)/config.h
+	@rm -f $(go_OBJ)
+	$(V)export BUILDDIR=`readlink -f $(BUILDDIR)` && cd $(SOURCEDIR)/src/pkg/buildcfg && go generate
+
+# wrappper & wrapper-suid install
+$(wrapper_INSTALL): $(wrapper)
+	@echo " INSTALL" $@
+	$(V)install -d $(@D)
+	$(V)install -m 0755 $(wrapper) $(wrapper_INSTALL)
+$(wrapper_suid_INSTALL): $(wrapper)
+	@echo " INSTALL SUID" $@
+	$(V)install -d $(@D)
+	$(V)install -m 4755 $(wrapper) $(wrapper_suid_INSTALL)
+
+# sif install
+$(sif_INSTALL): $(sif)
+	@echo " INSTALL" $@
+	$(V)install -d $(@D)
+	$(V)install -m 0755 $(sif) $(sif_INSTALL)
+
+#TODO: generate real config file and install, currently is just blank
+$(config):
+	$(V)touch $(config)
+
+$(config_INSTALL): $(config)
+	@echo " INSTALL" $@
+	$(V)install -d $(@D)
+	$(V)install -m 0644 $(config) $(config_INSTALL)
+
+$(mountdir):
+	@echo " INSTALL" $@
+	$(V)install -d $(mountdir)
+
+$(finaldir):
+	@echo " INSTALL" $@
+	$(V)install -d $(finaldir)
+
+$(overlaydir):
+	@echo " INSTALL" $@
+	$(V)install -d $(overlaydir)
+
+$(sessiondir):
+	@echo " INSTALL" $@
+	$(V)install -d $(sessiondir)
+
+.PHONY: man
+man:
+	$(V)go run -tags $(go_TAG) $(SOURCEDIR)/docs/makeDocs/makeDocs.go $(PREFIX)/share/man/man1
+
+.PHONY: collect
+collect:
+	@printf " DEPENDS\n"
+	$(V)mkdir -p $(BUILDDIR)
+	$(V):>$(BUILDDIR)/mergeddeps
+	$(V)for i in `find $(BUILDDIR) -name '*.o.d'`; do		\
+		(awk -v path="$${i%/*.*}" '/^.+:/ {			\
+			print path "/" $$0; next }{ print }' < $$i	\
+			>> $(BUILDDIR)/mergeddeps)			\
+	done
+
+.PHONY: dep
+dep:
+	@printf " GO DEPS\n"
+	$(V)(dep ensure -vendor-only >/dev/null 2>&1 || true)
+	$(V)(patch --silent ../vendor/github.com/opencontainers/image-tools/image/manifest.go ../patches/image_tools_manifest.go.patch)
+
+.PHONY: test
+test:
+	@echo " TEST go fmt"
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		cd $(SOURCEDIR) && test -z $(go fmt ./...)
+	@echo "       PASS"
+	@echo " TEST go vet"
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		cd $(SOURCEDIR) && go vet -tags $(go_TAG) -all ./...
+	@echo "       PASS"
+	@echo " TEST go lint"
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		cd $(SOURCEDIR) && golint -set_exit_status `go list ./...`
+	@echo "       PASS"
+	@echo " TEST go test"
+	$(V)export CGO_CPPFLAGS="$(cgo_CPPFLAGS)" CGO_LDFLAGS="$(cgo_LDFLAGS)" && \
+		cd $(SOURCEDIR) && go test -count=1 -tags $(go_TAG) -cover -race -timeout 120s ./...
+	@echo "       PASS"
+
+.PHONY: cscope
+cscope:
+	@printf " CSCOPE\n"
+	$(V)(cscope -k -R -q -u -b -v `find $(SOURCEDIR) -name '*.[chS]'` \
+		>/dev/null 2>&1 || true)
+
+.PHONY: clean
+clean:
+	@printf " CLEAN\n"
+	$(V)rm -rf $(BUILDDIR)/mergeddeps cscope.* $(CLEANFILES)
+
+.PHONY: install
+install: $(INSTALLFILES)
+	@echo " DONE"
+
+-include $(BUILDDIR)/mergeddeps
