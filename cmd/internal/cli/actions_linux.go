@@ -18,14 +18,10 @@ import (
 	"time"
 
 	"github.com/opencontainers/runtime-tools/generate"
-	"github.com/sylabs/singularity/internal/pkg/plugin"
-	"github.com/sylabs/singularity/pkg/image"
-	"github.com/sylabs/singularity/pkg/image/unpacker"
-	"github.com/sylabs/singularity/pkg/util/nvidia"
-
 	"github.com/spf13/cobra"
 	"github.com/sylabs/singularity/internal/pkg/buildcfg"
 	"github.com/sylabs/singularity/internal/pkg/instance"
+	"github.com/sylabs/singularity/internal/pkg/plugin"
 	"github.com/sylabs/singularity/internal/pkg/runtime/engines/config"
 	"github.com/sylabs/singularity/internal/pkg/runtime/engines/config/oci"
 	"github.com/sylabs/singularity/internal/pkg/security"
@@ -34,7 +30,10 @@ import (
 	"github.com/sylabs/singularity/internal/pkg/util/exec"
 	"github.com/sylabs/singularity/internal/pkg/util/fs"
 	"github.com/sylabs/singularity/internal/pkg/util/user"
+	"github.com/sylabs/singularity/pkg/image"
+	"github.com/sylabs/singularity/pkg/image/unpacker"
 	singularityConfig "github.com/sylabs/singularity/pkg/runtime/engines/singularity/config"
+	"github.com/sylabs/singularity/pkg/util/gpu"
 )
 
 // EnsureRootPriv ensures that a command is executed with root privileges.
@@ -195,23 +194,46 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 		engineConfig.SetImage(abspath)
 	}
 
-	if !NoNvidia && (Nvidia || engineConfig.File.AlwaysUseNv) {
-		userPath := os.Getenv("USER_PATH")
+	userPath := os.Getenv("USER_PATH")
+	var libs, bins []string
+	var gpuConfFile, gpuPlatform string
+	var err error
+
+	if !NoNvidia && (Nvidia || engineConfig.File.AlwaysUseNv) { // Mount nvidia GPU
+		gpuPlatform = "nv"
+		gpuConfFile = filepath.Join(buildcfg.SINGULARITY_CONFDIR, "nvliblist.conf")
 
 		if engineConfig.File.AlwaysUseNv {
+			Nvidia = true
 			sylog.Verbosef("'always use nv = yes' found in singularity.conf")
 			sylog.Verbosef("binding nvidia files into container")
 		}
 
-		libs, bins, err := nvidia.Paths(buildcfg.SINGULARITY_CONFDIR, userPath)
+		// bind persistenced socket if found
+		BindPaths = append(BindPaths, gpu.NvidiaIpcsPath(userPath)...)
+		libs, bins, err = gpu.NvidiaPaths(gpuConfFile, userPath)
+	} else if !NoRocm && (Rocm || engineConfig.File.AlwaysUseRocm) { // Mount rocm GPU
+		gpuPlatform = "rocm"
+		gpuConfFile = filepath.Join(buildcfg.SINGULARITY_CONFDIR, "rocmliblist.conf")
+
+		if engineConfig.File.AlwaysUseRocm {
+			Rocm = true
+			sylog.Verbosef("'always use rocm = yes' found in singularity.conf")
+			sylog.Verbosef("binding rocm files into container")
+		}
+
+		libs, bins, err = gpu.RocmPaths(gpuConfFile, userPath)
+	}
+
+	if Nvidia || Rocm {
 		if err != nil {
-			sylog.Warningf("Unable to capture NVIDIA bind points: %v", err)
+			sylog.Warningf("Unable to capture %s bind points: %v", gpuPlatform, err)
 		} else {
 			if len(bins) == 0 {
-				sylog.Infof("Could not find any NVIDIA binaries on this host!")
+				sylog.Infof("Could not find any %s binaries on this host!", gpuPlatform)
 			} else {
 				if IsWritable {
-					sylog.Warningf("NVIDIA binaries may not be bound with --writable")
+					sylog.Warningf("%s binaries may not be bound with --writable", gpuPlatform)
 				}
 				for _, binary := range bins {
 					usrBinBinary := filepath.Join("/usr/bin", filepath.Base(binary))
@@ -220,14 +242,12 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 				}
 			}
 			if len(libs) == 0 {
-				sylog.Warningf("Could not find any NVIDIA libraries on this host!")
-				sylog.Warningf("You may need to edit %v/nvliblist.conf", buildcfg.SINGULARITY_CONFDIR)
+				sylog.Warningf("Could not find any %s libraries on this host!", gpuPlatform)
+				sylog.Warningf("You may need to manually edit %", gpuConfFile)
 			} else {
 				ContainLibsPath = append(ContainLibsPath, libs...)
 			}
 		}
-		// bind persistenced socket if found
-		BindPaths = append(BindPaths, nvidia.IpcsPath(userPath)...)
 	}
 
 	engineConfig.SetBindPath(BindPaths)
@@ -238,6 +258,7 @@ func execStarter(cobraCmd *cobra.Command, image string, args []string, name stri
 	engineConfig.SetWritableImage(IsWritable)
 	engineConfig.SetNoHome(NoHome)
 	engineConfig.SetNv(Nvidia)
+	engineConfig.SetRocm(Rocm)
 	engineConfig.SetAddCaps(AddCaps)
 	engineConfig.SetDropCaps(DropCaps)
 

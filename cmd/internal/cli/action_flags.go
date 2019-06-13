@@ -38,9 +38,11 @@ var (
 	IsWritable      bool
 	IsWritableTmpfs bool
 	Nvidia          bool
+	NoNvidia        bool
+	Rocm            bool
+	NoRocm          bool
 	NoHome          bool
 	NoInit          bool
-	NoNvidia        bool
 	VM              bool
 	VMErr           bool
 	IsSyOS          bool
@@ -364,6 +366,39 @@ var actionNvidiaFlag = cmdline.Flag{
 	ExcludedOS:   []string{cmdline.Darwin},
 }
 
+// hidden flag to disable nvidia bindings when 'always use nv = yes'
+var actionNoNvidiaFlag = cmdline.Flag{
+	ID:           "actionNoNvidiaFlag",
+	Value:        &NoNvidia,
+	DefaultValue: false,
+	Name:         "no-nv",
+	Hidden:       true,
+	EnvKeys:      []string{"NV_OFF", "NO_NV"},
+	ExcludedOS:   []string{cmdline.Darwin},
+}
+
+// --rocm flag to automatically bind
+var actionRocmFlag = cmdline.Flag{
+	ID:           "actionRocmFlag",
+	Value:        &Rocm,
+	DefaultValue: false,
+	Name:         "nv",
+	Usage:        "enable Rocm support",
+	EnvKeys:      []string{"NV"},
+	ExcludedOS:   []string{cmdline.Darwin},
+}
+
+// hidden flag to disable rocm bindings when 'always use rocm = yes'
+var actionNoRocmFlag = cmdline.Flag{
+	ID:           "actionNoRocmFlag",
+	Value:        &NoRocm,
+	DefaultValue: false,
+	Name:         "no-rocm",
+	Hidden:       true,
+	EnvKeys:      []string{"ROCM_OFF", "NO_ROCM"},
+	ExcludedOS:   []string{cmdline.Darwin},
+}
+
 // -w|--writable
 var actionWritableFlag = cmdline.Flag{
 	ID:           "actionWritableFlag",
@@ -427,16 +462,6 @@ var actionDockerLoginFlag = cmdline.Flag{
 	Name:         "docker-login",
 	Usage:        "login to a Docker Repository interactively",
 	EnvKeys:      []string{"DOCKER_LOGIN"},
-}
-
-// hidden flag to disable nvidia bindings when 'always use nv = yes'
-var actionNoNvidiaFlag = cmdline.Flag{
-	ID:           "actionNoNvidiaFlag",
-	Value:        &NoNvidia,
-	DefaultValue: false,
-	Name:         "no-nv",
-	EnvKeys:      []string{"NV_OFF", "NO_NV"},
-	ExcludedOS:   []string{cmdline.Darwin},
 }
 
 // --vm
