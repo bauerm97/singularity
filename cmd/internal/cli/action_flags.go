@@ -382,9 +382,9 @@ var actionRocmFlag = cmdline.Flag{
 	ID:           "actionRocmFlag",
 	Value:        &Rocm,
 	DefaultValue: false,
-	Name:         "nv",
+	Name:         "rocm",
 	Usage:        "enable Rocm support",
-	EnvKeys:      []string{"NV"},
+	EnvKeys:      []string{"ROCM"},
 	ExcludedOS:   []string{cmdline.Darwin},
 }
 
@@ -654,13 +654,15 @@ func init() {
 	cmdManager.RegisterFlagForCmd(&actionContainFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionContainAllFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionNvidiaFlag, actionsInstanceCmd...)
+	cmdManager.RegisterFlagForCmd(&actionNoNvidiaFlag, actionsInstanceCmd...)
+	cmdManager.RegisterFlagForCmd(&actionRocmFlag, actionsInstanceCmd...)
+	cmdManager.RegisterFlagForCmd(&actionNoRocmFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionWritableFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionWritableTmpfsFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionNoHomeFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionNoInitFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionNoHTTPSFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionDockerLoginFlag, actionsInstanceCmd...)
-	cmdManager.RegisterFlagForCmd(&actionNoNvidiaFlag, actionsInstanceCmd...)
 	cmdManager.RegisterFlagForCmd(&actionVMFlag, actionsCmd...)
 	cmdManager.RegisterFlagForCmd(&actionVMErrFlag, actionsCmd...)
 	cmdManager.RegisterFlagForCmd(&actionSyOSFlag, ShellCmd)
